@@ -32,8 +32,8 @@ namespace Game
         private void Update()
         {
             HandleMovement();
-            HandleDigging();
-            HandleGrowthLerp();
+            //HandleDigging();
+            //HandleGrowthLerp();
         }
 
         private void HandleMovement()

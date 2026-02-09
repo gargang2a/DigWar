@@ -6,60 +6,58 @@ Shader "Game/DigBrush"
     }
     SubShader
     {
-        Tags { "Queue"="Transparent" "IgnoreProjector"="True" "RenderType"="Transparent" }
+        Tags { "RenderType"="Transparent" "Queue"="Transparent" "RenderPipeline" = "UniversalPipeline" }
         LOD 100
-        
-        // Blend state to "Erase" based on alpha
-        // Destination color is preserved where brush alpha is 0
-        // Destination becomes transparent where brush alpha is 1
-        // Algorithm: Final = (0,0,0,0) * SrcAlpha + Dest * (1-SrcAlpha)
+
+        // Blend state: Destination color remains where Alpha is 0. Destination becomes transparent where Alpha is 1.
         Blend SrcAlpha OneMinusSrcAlpha
-        
         ZWrite Off
         Cull Off
 
         Pass
         {
-            CGPROGRAM
+            Name "DigPass"
+            
+            HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
             
-            #include "UnityCG.cginc"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-            struct appdata
+            struct Attributes
             {
-                float4 vertex : POSITION;
+                float4 positionOS : POSITION;
                 float2 uv : TEXCOORD0;
             };
 
-            struct v2f
+            struct Varyings
             {
                 float2 uv : TEXCOORD0;
-                float4 vertex : SV_POSITION;
+                float4 positionCS : SV_POSITION;
             };
 
-            sampler2D _MainTex;
-            float4 _MainTex_ST;
+            TEXTURE2D(_MainTex);
+            SAMPLER(sampler_MainTex);
+            
+            CBUFFER_START(UnityPerMaterial)
+                float4 _MainTex_ST;
+            CBUFFER_END
 
-            v2f vert (appdata v)
+            Varyings vert(Attributes input)
             {
-                v2f o;
-                o.vertex = UnityObjectToClipPos(v.vertex);
-                o.uv = TRANSFORM_TEX(v.uv, _MainTex);
-                return o;
+                Varyings output;
+                output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.uv = TRANSFORM_TEX(input.uv, _MainTex);
+                return output;
             }
 
-            fixed4 frag (v2f i) : SV_Target
+            half4 frag(Varyings input) : SV_Target
             {
-                // Sample the brush texture (alpha mainly)
-                fixed4 col = tex2D(_MainTex, i.uv);
-                
-                // We want to "Erase", so we output 0 color.
-                // The Blend mode handles the rest.
-                // Output Alpha must be the Brush's Alpha to control the blending factor.
-                return fixed4(0, 0, 0, col.a);
+                half4 col = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
+                // Erase logic: RGB is 0 (black), Alpha determines transparency erase power.
+                return half4(0, 0, 0, col.a);
             }
-            ENDCG
+            ENDHLSL
         }
     }
 }

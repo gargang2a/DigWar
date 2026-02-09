@@ -19,9 +19,14 @@ namespace Game
 
         [Header("References")]
         [SerializeField] private Renderer _soilRenderer;
+        [SerializeField] private Renderer _shadowRenderer; // 그림자 레이어
+        [SerializeField] private Renderer _backgroundRenderer; // 바닥 배경 레이어
 
         private RenderTexture _soilTexture;
-        private Material _displayMaterial;
+        private RenderTexture _shadowTexture;
+        
+        private Material _soilMaterial;
+        private Material _shadowMaterial;
 
         // 캐싱: 매 프레임 new Rect 생성을 방지
         private Rect _brushRect;
@@ -53,37 +58,77 @@ namespace Game
             _soilTexture.Create();
 
             // 초기 색상으로 채우기
-            FillWithColor(_soilColor);
+            FillWithColor(_soilTexture, _soilColor);
 
             // 렌더러에 적용
-            ApplyToRenderer();
+            ApplyToRenderer(_soilRenderer, ref _soilMaterial, _soilTexture);
+            
+            // 그림자 초기화
+            InitializeShadow();
+            
+            // 배경 초기화
+            InitializeBackground();
         }
 
-        private void FillWithColor(Color color)
+        private void InitializeShadow()
+        {
+            if (_shadowRenderer == null) return;
+
+            // 그림자용 텍스처 생성 (Soil과 동일 해상도)
+            _shadowTexture = new RenderTexture(_resolution, _resolution, 0, RenderTextureFormat.ARGB32)
+            {
+                name = "ShadowRenderTexture",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            _shadowTexture.Create();
+
+            // 그림자는 검은색(0,0,0, 0.5f)으로 채움
+            FillWithColor(_shadowTexture, new Color(0, 0, 0, 0.5f));
+
+            // 렌더러 적용
+            ApplyToRenderer(_shadowRenderer, ref _shadowMaterial, _shadowTexture);
+        }
+
+        private void InitializeBackground()
+        {
+            if (_backgroundRenderer == null) return;
+            // 배경은 별도의 RenderTexture 없이 텍스처만 타일링되면 됨 (이미 세팅되었다고 가정)
+            // 필요하다면 여기서 메테리얼 인스턴싱 등을 수행
+        }
+
+        private void FillWithColor(RenderTexture targetRT, Color color)
         {
             // 임시 텍스처 생성 및 즉시 해제
             Texture2D temp = new Texture2D(1, 1, TextureFormat.RGBA32, false);
             temp.SetPixel(0, 0, color);
             temp.Apply();
-            Graphics.Blit(temp, _soilTexture);
+            Graphics.Blit(temp, targetRT);
             Destroy(temp);
         }
 
-        private void ApplyToRenderer()
+        private void ApplyToRenderer(Renderer renderer, ref Material materialInstance, Texture texture)
         {
-            if (_soilRenderer == null)
-            {
-                Debug.LogWarning("[SoilManager] Soil Renderer is not assigned!");
-                return;
-            }
+            if (renderer == null) return;
 
-            // 기존 머티리얼 복제하여 인스턴스화 (공유 머티리얼 오염 방지)
-            _displayMaterial = new Material(Shader.Find("Sprites/Default"))
+            // URP Unlit 사용
+            var shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Sprites/Default");
+
+            materialInstance = new Material(shader)
             {
-                mainTexture = _soilTexture
+                mainTexture = texture
             };
-            _soilRenderer.material = _displayMaterial;
-            _soilRenderer.transform.localScale = new Vector3(_worldSize.x, _worldSize.y, 1f);
+            
+            // Alpha Clipping 등을 방지하기 위해 Transparent 설정 (URP 표준)
+            materialInstance.SetFloat("_Surface", 1.0f); // 1 = Transparent
+            materialInstance.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            materialInstance.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            materialInstance.SetInt("_ZWrite", 0);
+            materialInstance.renderQueue = 3000;
+
+            renderer.material = materialInstance;
+            renderer.transform.localScale = new Vector3(_worldSize.x, _worldSize.y, 1f);
         }
 
         /// <summary>
@@ -116,7 +161,18 @@ namespace Game
             );
 
             // GL 컨텍스트 설정 및 그리기
-            RenderTexture.active = _soilTexture;
+            DigTexture(_soilTexture);
+            
+            // 그림자도 똑같이 파줌 (동기화)
+            if (_shadowTexture != null)
+            {
+                DigTexture(_shadowTexture);
+            }
+        }
+
+        private void DigTexture(RenderTexture targetRT)
+        {
+            RenderTexture.active = targetRT;
             GL.PushMatrix();
             GL.LoadPixelMatrix(0, _resolution, 0, _resolution);
 
@@ -134,9 +190,13 @@ namespace Game
                 _soilTexture = null;
             }
 
-            if (_displayMaterial != null)
+            if (_soilMaterial != null)
             {
-                Destroy(_displayMaterial);
+                Destroy(_soilMaterial);
+            }
+            if (_shadowMaterial != null)
+            {
+                Destroy(_shadowMaterial);
             }
         }
     }
